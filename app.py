@@ -4,54 +4,47 @@ import os
 import uuid
 from datetime import datetime
 
-EMPLOYEE_FILE = "employees.csv"
-ADMIN_FILE = "admins.csv"
-FEEDBACK_FILE = "feedback.csv"
+# Ensure data folder exists
+os.makedirs("data", exist_ok=True)
 
-st.set_page_config(page_title="Employee Feedback System", layout="wide")
+# File paths
+EMPLOYEE_FILE = os.path.join("data", "employees.csv")
+ADMIN_FILE = os.path.join("data", "admins.csv")
+FEEDBACK_FILE = os.path.join("data", "feedback.csv")
 
+# Constants
 DEPARTMENTS = ["Accounts", "Human Resources", "Operations", "Marketing", "Management", "Sales"]
 SUB_DEPARTMENTS = ["Design & Engineering", "PPC", "Production", "Project Management", "Quality Assurance", "Quality Control", "SCM", "NA"]
 LOCATIONS = ["HO - Hyderabad", "Riyadh KSA", "Unit 1 & 2 Hyderabad"]
 
+# Load functions
 def load_employees():
-    if os.path.exists(EMPLOYEE_FILE):
-        try:
-            df = pd.read_csv(EMPLOYEE_FILE)
-            if "UID" not in df.columns:
-                df["UID"] = [str(uuid.uuid4()) for _ in range(len(df))]
-                df.to_csv(EMPLOYEE_FILE, index=False)
-            return df
-        except:
-            return pd.DataFrame(columns=["UID", "Name", "Email", "Password", "Department", "SubDepartment", "Location"])
-    return pd.DataFrame(columns=["UID", "Name", "Email", "Password", "Department", "SubDepartment", "Location"])
+    try:
+        df = pd.read_csv(EMPLOYEE_FILE)
+        if "UID" not in df.columns:
+            df["UID"] = [str(uuid.uuid4()) for _ in range(len(df))]
+            df.to_csv(EMPLOYEE_FILE, index=False)
+        return df
+    except:
+        return pd.DataFrame(columns=["UID", "Name", "Email", "Password", "Department", "SubDepartment", "Location"])
 
 def save_employees(df):
     df.to_csv(EMPLOYEE_FILE, index=False)
 
 def load_admins():
-    if os.path.exists(ADMIN_FILE):
-        try:
-            return pd.read_csv(ADMIN_FILE)
-        except:
-            return pd.DataFrame(columns=["Name", "Email", "Password"])
-    return pd.DataFrame(columns=["Name", "Email", "Password"])
+    try:
+        return pd.read_csv(ADMIN_FILE)
+    except:
+        return pd.DataFrame(columns=["Name", "Email", "Password"])
 
 def load_feedback():
-    if os.path.exists(FEEDBACK_FILE):
-        try:
-            return pd.read_csv(FEEDBACK_FILE)
-        except:
-            return pd.DataFrame(columns=["From", "To", "Good", "Bad", "Improve", "Timestamp"])
-    return pd.DataFrame(columns=["From", "To", "Good", "Bad", "Improve", "Timestamp"])
+    try:
+        return pd.read_csv(FEEDBACK_FILE)
+    except:
+        return pd.DataFrame(columns=["From", "To", "Good", "Bad", "Improve", "Timestamp"])
 
 def save_admins(df):
     df.to_csv(ADMIN_FILE, index=False)
-
-def save_feedback(sender, receiver, good, bad, improve):
-    df = load_feedback()
-    df.loc[len(df.index)] = [sender, receiver, good, bad, improve, datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
-    df.to_csv(FEEDBACK_FILE, index=False)
 
 def update_password(email, new_pwd):
     employees = load_employees()
@@ -63,12 +56,34 @@ def update_password(email, new_pwd):
         admins.loc[admins.Email == email, "Password"] = new_pwd
         save_admins(admins)
 
+def save_feedback(sender, receiver, good, bad, improve):
+    df = load_feedback()
+
+    # Check if already submitted today
+    today = datetime.now().strftime("%Y-%m-%d")
+    already_submitted = df[
+        (df["From"] == sender) &
+        (df["To"] == receiver) &
+        (df["Timestamp"].str.startswith(today))
+    ]
+
+    if already_submitted.empty:
+        df.loc[len(df.index)] = [sender, receiver, good, bad, improve, datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+        df.to_csv(FEEDBACK_FILE, index=False)
+        return True
+    else:
+        return False
+
+# Session State
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
     st.session_state.user_email = ""
     st.session_state.user_type = ""
 
-# ---------------------- LOGIN -----------------------
+# UI Start
+st.set_page_config(page_title="Employee Feedback System", layout="wide")
+
+# ------------------- LOGIN ------------------------
 if not st.session_state.authenticated:
     st.markdown("###\n###\n###")
     st.markdown("<div style='display: flex; justify-content: center;'>", unsafe_allow_html=True)
@@ -96,6 +111,7 @@ if not st.session_state.authenticated:
 
     st.markdown("</div></div>", unsafe_allow_html=True)
 
+# ------------------ AUTHENTICATED ---------------------
 elif st.session_state.authenticated:
     employees = load_employees()
     feedback = load_feedback()
@@ -105,6 +121,7 @@ elif st.session_state.authenticated:
         st.session_state.authenticated = False
         st.rerun()
 
+    # ------------------ ADMIN PANEL ------------------
     if st.session_state.user_type == "Admin":
         tab = st.sidebar.radio("Admin Panel", ["➕ Add Employee", "👥 View/Edit Employees", "🔐 Profile"])
 
@@ -179,17 +196,7 @@ elif st.session_state.authenticated:
                             st.markdown(f"❌ {row['Bad']}")
                             st.markdown(f"💡 {row['Improve']}")
                             st.markdown("---")
-
-        elif tab == "🔐 Profile":
-            st.title("Admin Profile")
-            admin = load_admins()
-            user = admin[admin.Email == st.session_state.user_email].iloc[0]
-            st.markdown(f"**Name:** {user['Name']}")
-            st.markdown(f"**Email:** {user['Email']}")
-            new_pwd = st.text_input("New Password", type="password")
-            if st.button("Change Password"):
-                update_password(user.Email, new_pwd)
-                st.success("Password updated.")
+    # ------------------ EMPLOYEE PANEL ------------------
     elif st.session_state.user_type == "Employee":
         employees = load_employees()
         user = employees[employees.Email == st.session_state.user_email].iloc[0]
@@ -209,10 +216,17 @@ elif st.session_state.authenticated:
                 feedback_inputs.append((peer["Name"], good, bad, improve))
 
             if st.button("Submit All Feedback"):
+                submitted_any = False
                 for to_name, good, bad, improve in feedback_inputs:
-                    save_feedback(user["Name"], to_name, good, bad, improve)
-                st.success("All feedback submitted!")
-                st.rerun()
+                    if all([good.strip(), bad.strip(), improve.strip()]):  # Skip empty
+                        success = save_feedback(user["Name"], to_name, good, bad, improve)
+                        if success:
+                            submitted_any = True
+                        else:
+                            st.warning(f"You already submitted feedback for {to_name} today.")
+                if submitted_any:
+                    st.success("All feedback submitted!")
+                    st.rerun()
 
         elif tab == "📊 Feedback History":
             st.title("Your Feedback History")
